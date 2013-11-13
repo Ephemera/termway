@@ -1,0 +1,95 @@
+#!/bin/bash
+
+cfg=~/.termwayrc
+stns=./stations
+stn=${1/역/} 
+
+# 2호선일때만 내선/외선으로 표기해주고 그 외에는 상행/하행으로 표기.
+function get_line_type {
+    if [[ $1 = "2" ]]; then
+        if [[ $2 = "1" ]]; then
+            echo "내선"
+        else
+            echo "외선"
+        fi
+    else
+        if [[ $2 = "1" ]]; then
+            echo "상행"
+        else
+            echo "하행"
+        fi
+    fi
+}
+
+# apikey 읽어오기
+if [[ -f $cfg ]]; then
+  key=$(grep key $cfg | awk -F\= '{print $2}') 
+else
+  key="sample"
+fi
+
+# 파일에 저장해 둔 역코드 읽어오기
+if [[ -f $stns ]]; then
+  if [[ -z $stn ]]; then
+    echo "역명을 입력해주세요."
+    exit
+  else
+    stncode=$(grep $stn $stns | awk -F\= '{print $2}') 
+  fi
+else
+  touch $stns    
+fi
+
+# hashmap에 한글이 들어가니 제대로 동작하지 않아 변수로 각각 생성
+line_name_1="1호선" 
+line_name_2="2호선" 
+line_name_3="3호선" 
+line_name_4="4호선" 
+line_name_5="5호선" 
+line_name_6="6호선" 
+line_name_7="7호선" 
+line_name_8="8호선" 
+line_name_9="9호선" 
+line_name_J="중앙선" 
+line_name_B="분당선" 
+line_name_SU="수인선" 
+line_name_K="경의선" 
+line_name_A="공항철도" 
+line_name_G="경춘선" 
+line_name_S="신분당선" 
+
+# 파일에 저장해 둔 역코드가 없을 경우 api 콜해서 역코드 읽어와서 array 형태로 변환 
+# 그리고 찾아온 역코드는 $stns 파일에 저장
+if [[ $stncode = "" ]]; then
+  val=$(curl -s http://openAPI.seoul.go.kr:8088/$key/json/SearchInfoBySubwayNameService/1/5/$stn | jq -r 'if .SearchInfoBySubwayNameService == null then null else .SearchInfoBySubwayNameService.row[] end | tostring')
+  if [[ $val = null ]]; then
+    echo '역을 잘못 입력하셨거나 제 실수...'
+  else
+    stncodes=() 
+    for v in $val; do
+      stn_code=$(echo $v | jq -r '.STATION_CD')
+      line_num=$(echo $v | jq -r '.LINE_NUM')
+      stncodes+=( $line_num:$stn_code )
+      echo "$stn=$line_num:$stn_code" >> $stns 
+    done
+  fi
+else
+  stncodes=( $stncode )
+fi
+
+# array 형태의 역코드 기준으로 시간 검색해서 출력
+for i in ${stncodes[@]}; do
+  line_num=$(echo $i | awk -F\: '{print $1}')
+  stn_code=$(echo $i | awk -F\: '{print $2}')
+  line_name="line_name_$line_num"
+  echo ${!line_name}
+  for inout in 1 2; do 
+    arrivetime=$(curl -s http://openAPI.seoul.go.kr:8088/$key/json/SearchArrivalTimeOfLine2SubwayByIDService/1/5/$stn_code/$inout/1/ | jq -r 'if .SearchArrivalTimeOfLine2SubwayByIDService.row == null then null else .SearchArrivalTimeOfLine2SubwayByIDService.row[].ARRIVETIME end')
+    if [[ $arrivetime != "" ]]; then
+      line_type=$(get_line_type $line_num $inout) 
+      if [[ $arrivetime != null ]]; then
+        echo $line_type- $arrivetime
+      fi  
+    fi
+  done
+done
